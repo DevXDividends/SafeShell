@@ -1,0 +1,5 @@
+typer[all]
+rich
+psutil
+sqlite-utils
+pytest
