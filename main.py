@@ -104,9 +104,12 @@ def run(command: str = typer.Argument(..., help="The command to run, e.g. 'rm -r
         raise typer.Exit()
 
     # ── AI/Rule-based Undo Plan (Module 3) ──
-    # Simple commands -> instant rule-based plan. Compound commands (&&, ;, |) -> LLM call.
+    # Simple commands -> instant rule-based plan. Compound commands (&&, ;, |) ->
+    # Groq (if key set) -> Ollama (if available + user consents) -> heuristic fallback.
     undo_plan = generate_undo_plan(parsed, impact, risk["level"])
-    console.print(f"[dim]🧩 Undo plan generated ({len(undo_plan.get('undo_steps', []))} step(s))[/dim]")
+    backend = undo_plan.pop("_backend", "heuristic")
+    console.print(f"[dim]🧩 Undo plan generated via [bold]{backend}[/bold] "
+                   f"({len(undo_plan.get('undo_steps', []))} step(s))[/dim]")
 
     # ── Checkpoint lo (existing paths ka) ──
     snapshot_id = create_checkpoint(parsed.targets)
