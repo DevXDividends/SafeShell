@@ -1,3 +1,6 @@
+ollama
+groq
+python-dotenv
 typer[all]
 rich
 psutil
