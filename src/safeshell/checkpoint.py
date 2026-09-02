@@ -10,7 +10,7 @@ import subprocess
 from datetime import datetime
 from typing import List
 
-from config import SNAPSHOT_DIR
+from .config import SNAPSHOT_DIR
 
 
 def _latest_snapshot_link(target_key: str) -> str:

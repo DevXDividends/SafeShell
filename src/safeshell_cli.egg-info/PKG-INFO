@@ -1,3 +1,21 @@
+Metadata-Version: 2.4
+Name: safeshell-cli
+Version: 0.1.0
+Summary: A transactional command execution framework with AI-generated undo plans and OverlayFS-based simulation.
+Author: Aditya
+License: MIT
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: typer>=0.12
+Requires-Dist: rich>=13.0
+Requires-Dist: psutil>=5.9
+Requires-Dist: ollama>=0.3
+Requires-Dist: groq>=1.0
+Requires-Dist: python-dotenv>=1.0
+Requires-Dist: sqlite-utils>=3.35
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+
 # SafeShell
 
 **A Transactional Command Execution Framework with AI-Generated Undo Plans and Simulation-Based Safety Guarantees**

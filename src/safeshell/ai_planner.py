@@ -26,9 +26,9 @@ import json
 import os
 import re
 
-from interceptor import ParsedCommand
-from models import ImpactReport
-from config import GROQ_API_KEY, GROQ_MODEL, PREFS_PATH
+from .interceptor import ParsedCommand
+from .models import ImpactReport
+from .config import GROQ_API_KEY, GROQ_MODEL, PREFS_PATH
 
 OLLAMA_MODEL = os.environ.get("SAFESHELL_OLLAMA_MODEL", "gemma3:4b")
 

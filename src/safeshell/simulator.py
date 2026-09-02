@@ -16,8 +16,8 @@ import stat
 import subprocess
 import tempfile
 
-from config import SNAPSHOT_DIR, SYSTEM_PATHS
-from models import ImpactReport
+from .config import SNAPSHOT_DIR, SYSTEM_PATHS
+from .models import ImpactReport
 
 
 class SimulationError(Exception):

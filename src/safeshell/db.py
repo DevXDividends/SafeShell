@@ -9,7 +9,7 @@ import json
 from datetime import datetime
 from contextlib import contextmanager
 
-from config import DB_PATH
+from .config import DB_PATH
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS transactions (

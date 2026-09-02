@@ -7,8 +7,8 @@ uska snapshot dhoondo, aur checkpoint.py use karke files wapas restore karo.
 import json
 from typing import List
 
-import db
-from checkpoint import restore_checkpoint
+from . import db
+from .checkpoint import restore_checkpoint
 
 
 def rollback(transaction_id: int) -> dict:
@@ -79,7 +79,7 @@ def _extract_targets(txn: dict) -> List[str]:
             pass
 
     # Fallback: command string se hi targets guess karo (interceptor use karke)
-    from interceptor import parse_command
+    from .interceptor import parse_command
     parsed = parse_command(txn["command"])
     return parsed.targets
 

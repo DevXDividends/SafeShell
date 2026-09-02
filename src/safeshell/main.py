@@ -14,15 +14,16 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-import db
-from interceptor import parse_command
-from risk_scorer import score_risk
-from models import ImpactReport
-from simulator import simulate, SimulationError
-from ai_planner import generate_undo_plan
-from checkpoint import create_checkpoint
-from executor import execute_command
-from rollback import rollback as do_rollback
+from . import db
+from .interceptor import parse_command
+from .risk_scorer import score_risk
+from .models import ImpactReport
+from .simulator import simulate, SimulationError
+from .ai_planner import generate_undo_plan
+from .checkpoint import create_checkpoint
+from .executor import execute_command
+from .rollback import rollback as do_rollback
+from .shell_integration import get_shell_init_script
 
 
 def _get_simulation_root(targets: list) -> str | None:
@@ -166,7 +167,7 @@ def history(limit: int = typer.Option(20, help="How many recent transactions to 
 
 @app.command()
 def undo(transaction_id: int = typer.Argument(..., help="Transaction ID to undo")):
-    """Ek transaction ko undo/rollback karo. Usage: python3 main.py undo 3"""
+    """Ek transaction ko undo/rollback karo. Usage: safeshell undo 3"""
     db.init_db()
     console.print(f"[dim]🔄 Rolling back transaction #{transaction_id}...[/dim]")
     result = do_rollback(transaction_id)
@@ -175,6 +176,45 @@ def undo(transaction_id: int = typer.Argument(..., help="Transaction ID to undo"
         console.print(f"[green]✅ {result['message']}[/green]")
     else:
         console.print(f"[red]❌ {result['message']}[/red]")
+
+
+@app.command()
+def shellinit():
+    """
+    Bash function definitions (safeshell-activate / safeshell-down) print karo.
+    Usage: eval "$(safeshell shellinit)"
+    Normally is command ko manually chalane ki zaroorat nahi — 'safeshell setup'
+    ise automatically tumhare .bashrc me wire kar deta hai.
+    """
+    print(get_shell_init_script())
+
+
+@app.command()
+def setup():
+    """
+    One-time setup: .bashrc me ek line add karo taaki har naye terminal me
+    'safeshell-activate' / 'safeshell-down' commands automatically available hon.
+    """
+    bashrc = os.path.expanduser("~/.bashrc")
+    marker_start = "# >>> safeshell shell integration >>>"
+    marker_end = "# <<< safeshell shell integration <<<"
+    init_line = f'{marker_start}\neval "$(safeshell shellinit)"\n{marker_end}\n'
+
+    existing = ""
+    if os.path.exists(bashrc):
+        with open(bashrc) as f:
+            existing = f.read()
+
+    if marker_start in existing:
+        console.print("[yellow]SafeShell is already set up in ~/.bashrc — nothing to do.[/yellow]")
+        raise typer.Exit()
+
+    with open(bashrc, "a") as f:
+        f.write(f"\n{init_line}")
+
+    console.print("[green]✅ Added SafeShell integration to ~/.bashrc[/green]")
+    console.print("[dim]Restart your terminal (or run 'source ~/.bashrc'), then use "
+                   "'safeshell-activate' to start intercepting rm/mv/chmod.[/dim]")
 
 
 if __name__ == "__main__":

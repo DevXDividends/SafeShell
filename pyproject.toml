@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "safeshell-cli"
+version = "0.1.0"
+description = "A transactional command execution framework with AI-generated undo plans and OverlayFS-based simulation."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+    { name = "Aditya" }
+]
+dependencies = [
+    "typer>=0.12",
+    "rich>=13.0",
+    "psutil>=5.9",
+    "ollama>=0.3",
+    "groq>=1.0",
+    "python-dotenv>=1.0",
+    "sqlite-utils>=3.35",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+safeshell = "safeshell.main:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]

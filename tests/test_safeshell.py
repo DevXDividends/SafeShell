@@ -26,18 +26,15 @@ import tempfile
 
 import pytest
 
-# Project root ko path me daalo taaki 'import interceptor' etc. kaam kare
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import db
-import ai_planner
-from interceptor import parse_command
-from risk_scorer import score_risk
-from models import ImpactReport
-from checkpoint import create_checkpoint, restore_checkpoint
-from executor import execute_command
-from rollback import rollback
-from simulator import simulate, SimulationError
+import safeshell.db as db
+import safeshell.ai_planner as ai_planner
+from safeshell.interceptor import parse_command
+from safeshell.risk_scorer import score_risk
+from safeshell.models import ImpactReport
+from safeshell.checkpoint import create_checkpoint, restore_checkpoint
+from safeshell.executor import execute_command
+from safeshell.rollback import rollback
+from safeshell.simulator import simulate, SimulationError
 
 
 # ═══════════════════════════════════════════════════════════════

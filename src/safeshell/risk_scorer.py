@@ -4,8 +4,8 @@ Kaam: ImpactReport lo aur ek explainable, rule-based risk score do.
 Ye AI nahi hai — pure math/rules. Isliye ye fast aur predictable hai.
 """
 
-from models import ImpactReport
-from config import RISK_THRESHOLDS
+from .models import ImpactReport
+from .config import RISK_THRESHOLDS
 
 
 def score_risk(impact: ImpactReport) -> dict:
