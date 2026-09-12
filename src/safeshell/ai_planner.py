@@ -3,23 +3,17 @@ ai_planner.py — Module 3: AI UNDO PLANNER
 Kaam: Command + uska ImpactReport lo, aur ek structured JSON undo plan banao.
 
 Design philosophy (important report/viva point):
-- SIMPLE commands (single rm, single mv) -> RULE-BASED plan always (fast,
-  deterministic, no LLM call needed regardless of what backends are available)
-- COMPOUND commands (rm x && mv y z, chained with &&/;/|) -> Try an LLM backend,
-  in this PRIORITY ORDER:
-    1. Groq API      — if GROQ_API_KEY is set, use it directly (user already
-                        gave consent by providing the key; fast, no local RAM cost)
-    2. Ollama (local) — if Groq unavailable but Ollama is installed with models,
-                        ASK THE USER for permission (once, cached) before sending
-                        any command data to a local model
-    3. Heuristic       — if neither is available/consented, fall back to the same
-                        rule-based plan used for simple commands.
+- SIMPLE commands (single rm, single mv) -> RULE-BASED plan always.
+- COMPOUND commands (rm x && mv y z) -> priority chain, driven ENTIRELY by
+  persistent settings (~/.safeshell/settings.json), never by ad-hoc prompts
+  mid-run:
+    1. Groq API      — only if settings.groq_enabled AND a key is configured
+    2. Ollama (local) — only if settings.local_llm_enabled AND Ollama has models
+    3. Heuristic      — the ALWAYS-ON default. Cannot be disabled. This is
+                        what runs on a fresh install with zero configuration.
 
-NOTE on safety: because SafeShell's rollback restores each affected path
-INDEPENDENTLY from its own pre-command snapshot (not by "replaying" inverse
-commands in sequence), getting the undo_steps' ORDER wrong does not break
-correctness — it only affects how readable/explainable the plan is in the
-audit log. The safety net is the checkpoint, not the AI's reasoning.
+Use `safeshell settings` to turn Groq/Ollama on and configure the API key —
+nothing here ever silently switches those on by itself.
 """
 
 import json
@@ -28,9 +22,10 @@ import re
 
 from .interceptor import ParsedCommand
 from .models import ImpactReport
-from .config import GROQ_API_KEY, GROQ_MODEL, PREFS_PATH
+from .settings import load_settings
 
-OLLAMA_MODEL = os.environ.get("SAFESHELL_OLLAMA_MODEL", "gemma3:4b")
+DEFAULT_OLLAMA_MODEL = "gemma3:4b"
+DEFAULT_GROQ_MODEL = os.environ.get("SAFESHELL_GROQ_MODEL", "openai/gpt-oss-20b")
 
 SYSTEM_PROMPT = """You are a Linux systems assistant. Given a shell command and its \
 simulated filesystem impact, output ONLY valid JSON describing a rollback plan. \
@@ -53,12 +48,10 @@ Schema:
 # ─────────────────────────────────────────────────────────────
 
 def _is_compound(raw_command: str) -> bool:
-    """Command me &&, ; ya | (chaining) hai ya nahi check karo."""
     return bool(re.search(r"&&|;|\|(?!\|)", raw_command))
 
 
 def _split_subcommands(raw_command: str) -> list:
-    """Compound command ko uske individual parts me todo, taaki LLM ko clearly bata sakein."""
     parts = re.split(r"&&|;|\|(?!\|)", raw_command)
     return [p.strip() for p in parts if p.strip()]
 
@@ -84,15 +77,10 @@ def _build_user_prompt(parsed: ParsedCommand, impact: ImpactReport, risk_level: 
 
 
 # ─────────────────────────────────────────────────────────────
-# Rule-based plan (used for simple commands AND as universal fallback)
+# Rule-based plan (simple commands AND universal fallback)
 # ─────────────────────────────────────────────────────────────
 
 def _rule_based_plan(parsed: ParsedCommand, impact: ImpactReport, risk_level: str) -> dict:
-    """
-    'affected_paths' ko snapshot se restore karo. undo_steps ke 'target' me
-    hamesha parsed.targets use karo (wahi paths jinka checkpoint liya gaya tha) —
-    impact.affected_paths sirf informational hai, checkpoint keys se match nahi karega.
-    """
     return {
         "original_command": parsed.raw,
         "risk_level": risk_level.lower(),
@@ -107,18 +95,18 @@ def _rule_based_plan(parsed: ParsedCommand, impact: ImpactReport, risk_level: st
 
 
 # ─────────────────────────────────────────────────────────────
-# Backend 1: Groq (cloud API)
+# Backend 1: Groq (cloud API) — only called if settings say so
 # ─────────────────────────────────────────────────────────────
 
-def _groq_plan(parsed: ParsedCommand, impact: ImpactReport, risk_level: str) -> dict:
+def _groq_plan(parsed: ParsedCommand, impact: ImpactReport, risk_level: str, api_key: str, model: str) -> dict:
     try:
         from groq import Groq
 
-        client = Groq(api_key=GROQ_API_KEY)
+        client = Groq(api_key=api_key)
         user_prompt, subcommands = _build_user_prompt(parsed, impact, risk_level)
 
         response = client.chat.completions.create(
-            model=GROQ_MODEL,
+            model=model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
@@ -143,7 +131,7 @@ def _groq_plan(parsed: ParsedCommand, impact: ImpactReport, risk_level: str) -> 
 
 
 # ─────────────────────────────────────────────────────────────
-# Backend 2: Ollama (local LLM, needs user consent)
+# Backend 2: Ollama (local) — only called if settings say so
 # ─────────────────────────────────────────────────────────────
 
 def _ollama_available() -> bool:
@@ -156,55 +144,19 @@ def _ollama_available() -> bool:
         return False
 
 
-def _load_prefs() -> dict:
-    if os.path.exists(PREFS_PATH):
-        try:
-            with open(PREFS_PATH) as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError):
-            return {}
-    return {}
-
-
-def _save_prefs(prefs: dict):
-    os.makedirs(os.path.dirname(PREFS_PATH), exist_ok=True)
-    with open(PREFS_PATH, "w") as f:
-        json.dump(prefs, f, indent=2)
-
-
-def _get_local_llm_consent() -> bool:
-    """
-    User se ek baar poochho ki local LLM (Ollama) use karne ki permission hai ya nahi.
-    Jawaab cache ho jaata hai (~/.safeshell/prefs.json) — dobara nahi poochhega.
-    """
-    prefs = _load_prefs()
-    if "use_local_llm" in prefs:
-        return prefs["use_local_llm"]
-
-    print("\n[SafeShell] A local AI model (Ollama) was detected on this system.")
-    print("It can generate smarter undo plans for compound/chained commands.")
-    answer = input("Allow SafeShell to use the local LLM for this? [y/N]: ").strip().lower()
-    consent = answer == "y"
-
-    prefs["use_local_llm"] = consent
-    _save_prefs(prefs)
-    print(f"[SafeShell] Preference saved. (Change anytime by editing {PREFS_PATH})\n")
-    return consent
-
-
-def _ollama_plan(parsed: ParsedCommand, impact: ImpactReport, risk_level: str) -> dict:
+def _ollama_plan(parsed: ParsedCommand, impact: ImpactReport, risk_level: str, model: str) -> dict:
     try:
         import ollama
 
         user_prompt, subcommands = _build_user_prompt(parsed, impact, risk_level)
         response = ollama.chat(
-            model=OLLAMA_MODEL,
+            model=model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
             format="json",
-            keep_alive=0,  # RAM turant free karo call ke baad, background me model load rakhne ki zaroorat nahi
+            keep_alive=0,  # RAM turant free karo call ke baad
         )
         plan = json.loads(response["message"]["content"])
 
@@ -213,7 +165,7 @@ def _ollama_plan(parsed: ParsedCommand, impact: ImpactReport, risk_level: str) -
                 f"Ollama returned incomplete plan ({len(plan.get('undo_steps', []))} steps, "
                 f"expected {len(subcommands)})"
             )
-        plan["_backend"] = f"ollama ({OLLAMA_MODEL})"
+        plan["_backend"] = f"ollama ({model})"
         return plan
 
     except Exception as e:
@@ -224,38 +176,46 @@ def _ollama_plan(parsed: ParsedCommand, impact: ImpactReport, risk_level: str) -
 
 
 # ─────────────────────────────────────────────────────────────
-# Main entrypoint — priority chain
+# Main entrypoint — settings-driven priority chain
 # ─────────────────────────────────────────────────────────────
 
 def generate_undo_plan(parsed: ParsedCommand, impact: ImpactReport, risk_level: str) -> dict:
     """
-    Simple commands -> instant rule-based (no backend selection needed).
-    Compound commands -> Groq (if key set) > Ollama (if available + consented) > heuristic.
-    Returned dict always has a '_backend' key so the caller can display which
-    path was taken (transparency for the user).
+    Simple commands -> instant rule-based (settings never even consulted).
+    Compound commands -> read settings once, decide backend, NO interactive
+    prompts here. If nothing is enabled, heuristic silently handles it —
+    this is the correct behavior on a fresh install.
     """
     if not _is_compound(parsed.raw):
         plan = _rule_based_plan(parsed, impact, risk_level)
         plan["_backend"] = "heuristic (simple command)"
         return plan
 
-    if GROQ_API_KEY:
-        print("[SafeShell] Using Groq API for undo-plan reasoning "
-              "(command details will be sent to Groq's cloud servers).")
-        return _groq_plan(parsed, impact, risk_level)
+    settings = load_settings()
 
-    if _ollama_available():
-        if _get_local_llm_consent():
-            return _ollama_plan(parsed, impact, risk_level)
+    if settings["groq_enabled"] and settings.get("groq_api_key"):
+        return _groq_plan(
+            parsed, impact, risk_level,
+            api_key=settings["groq_api_key"],
+            model=DEFAULT_GROQ_MODEL,
+        )
+
+    if settings["local_llm_enabled"] and _ollama_available():
+        return _ollama_plan(
+            parsed, impact, risk_level,
+            model=settings.get("local_llm_model") or DEFAULT_OLLAMA_MODEL,
+        )
 
     plan = _rule_based_plan(parsed, impact, risk_level)
-    plan["_backend"] = "heuristic (no AI backend available/consented)"
+    plan["_backend"] = "heuristic (no AI backend enabled)"
     return plan
 
 
 # ── Quick manual test ──
 if __name__ == "__main__":
-    from interceptor import parse_command
+    # Direct script execution ke liye absolute import (relative import sirf
+    # 'python3 -m safeshell.ai_planner' se chalne par kaam karta, isliye ye safer hai)
+    from safeshell.interceptor import parse_command
 
     simple = parse_command("rm -rf /tmp/demo_folder")
     simple_impact = ImpactReport(files_deleted=1, affected_paths=["/tmp/demo_folder/file.txt"])
@@ -268,6 +228,6 @@ if __name__ == "__main__":
         files_deleted=1, files_modified=1,
         affected_paths=["/tmp/old.txt", "/tmp/new.txt"],
     )
-    print("\nTest 2 — Compound command (backend chain will be tried)...")
+    print("\nTest 2 — Compound command (uses current settings, run 'safeshell settings' to change):")
     plan2 = generate_undo_plan(compound, compound_impact, "MEDIUM")
     print(json.dumps(plan2, indent=2))

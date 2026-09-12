@@ -4,8 +4,20 @@ Version: 0.1.0
 Summary: A transactional command execution framework with AI-generated undo plans and OverlayFS-based simulation.
 Author: Aditya
 License: MIT
+Project-URL: Homepage, https://github.com/DevXDividends/SafeShell
+Project-URL: Repository, https://github.com/DevXDividends/SafeShell
+Keywords: shell,cli,rm,undo,rollback,overlayfs,safety,linux
+Classifier: Development Status :: 3 - Alpha
+Classifier: Environment :: Console
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: POSIX :: Linux
+Classifier: Programming Language :: Python :: 3
+Classifier: Topic :: System :: Shells
+Classifier: Topic :: System :: Systems Administration
 Requires-Python: >=3.9
 Description-Content-Type: text/markdown
+License-File: LICENSE
 Requires-Dist: typer>=0.12
 Requires-Dist: rich>=13.0
 Requires-Dist: psutil>=5.9
@@ -15,6 +27,7 @@ Requires-Dist: python-dotenv>=1.0
 Requires-Dist: sqlite-utils>=3.35
 Provides-Extra: dev
 Requires-Dist: pytest>=8.0; extra == "dev"
+Dynamic: license-file
 
 # SafeShell
 

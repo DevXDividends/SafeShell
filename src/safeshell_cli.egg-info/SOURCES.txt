@@ -1,3 +1,4 @@
+LICENSE
 README.md
 pyproject.toml
 src/safeshell/__init__.py
@@ -11,6 +12,7 @@ src/safeshell/main.py
 src/safeshell/models.py
 src/safeshell/risk_scorer.py
 src/safeshell/rollback.py
+src/safeshell/settings.py
 src/safeshell/shell_integration.py
 src/safeshell/simulator.py
 src/safeshell_cli.egg-info/PKG-INFO

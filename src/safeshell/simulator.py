@@ -85,7 +85,14 @@ def simulate(command: str, target_dir: str) -> ImpactReport:
             if unmount_result.returncode != 0:
                 # Lazy unmount fallback — agar koi process abhi bhi folder use kar raha ho
                 _run(["sudo", "umount", "-l", target_dir])
-        shutil.rmtree(work_root, ignore_errors=True)
+
+        # OverlayFS ka 'workdir' andar se root-owned files bana deta hai
+        # (kernel internal bookkeeping) — normal rmtree unhe delete nahi kar
+        # payega, isliye sudo se cleanup karo taaki .safeshell/snapshots/ me
+        # permission-denied junk na accumulate ho.
+        cleanup = _run(["sudo", "rm", "-rf", work_root])
+        if cleanup.returncode != 0:
+            shutil.rmtree(work_root, ignore_errors=True)
 
 
 def _analyze_upper(upper: str, target_dir: str) -> ImpactReport:

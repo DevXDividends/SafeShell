@@ -268,6 +268,14 @@ class TestSimulator:
 # ═══════════════════════════════════════════════════════════════
 
 class TestAiPlanner:
+    @pytest.fixture(autouse=True)
+    def isolated_settings(self, tmp_path, monkeypatch):
+        """Har test apni khud ki temp settings.json use kare — real ~/.safeshell/settings.json affect na ho."""
+        import safeshell.settings as settings_module
+        monkeypatch.setattr(settings_module, "SETTINGS_PATH", str(tmp_path / "settings.json"))
+        monkeypatch.setattr(ai_planner, "load_settings", settings_module.load_settings)
+        yield
+
     def test_simple_command_uses_heuristic_no_network_call(self):
         """Simple commands should NEVER hit an LLM backend — must be instant + deterministic."""
         parsed = parse_command("rm -rf /tmp/demo_folder")
@@ -278,21 +286,37 @@ class TestAiPlanner:
         assert len(plan["undo_steps"]) == 1
         assert plan["undo_steps"][0]["target"] == "/tmp/demo_folder"
 
-    def test_compound_command_falls_back_to_heuristic_when_no_backend(self, monkeypatch):
-        """If Groq key is absent AND Ollama is unavailable, must fall back cleanly (no crash)."""
-        monkeypatch.setattr(ai_planner, "GROQ_API_KEY", "")
-        monkeypatch.setattr(ai_planner, "_ollama_available", lambda: False)
+    def test_fresh_install_defaults_to_heuristic_no_prompts(self):
+        """CRITICAL: on a fresh install (no settings file), compound commands must
+        silently use heuristic — NO API calls, NO prompts, NO local LLM use."""
+        parsed = parse_command("rm old.txt && mv new.txt old.txt")
+        impact = ImpactReport(files_deleted=1, files_modified=1)
+        plan = ai_planner.generate_undo_plan(parsed, impact, "MEDIUM")
+
+        assert plan["_backend"] == "heuristic (no AI backend enabled)"
+        assert plan["requires_snapshot"] is True
+
+    def test_groq_disabled_even_with_key_present(self, monkeypatch):
+        """If a Groq key exists in settings but groq_enabled=False, Groq must NOT be used."""
+        from safeshell.settings import load_settings, save_settings
+        s = load_settings()
+        s["groq_enabled"] = False
+        s["groq_api_key"] = "some-key-that-should-be-ignored"
+        save_settings(s)
 
         parsed = parse_command("rm old.txt && mv new.txt old.txt")
         impact = ImpactReport(files_deleted=1, files_modified=1)
         plan = ai_planner.generate_undo_plan(parsed, impact, "MEDIUM")
 
-        assert plan["_backend"] == "heuristic (no AI backend available/consented)"
-        assert plan["requires_snapshot"] is True
+        assert plan["_backend"] == "heuristic (no AI backend enabled)"
 
-    def test_groq_backend_selected_when_key_present(self, monkeypatch):
-        """Verify the priority chain picks Groq when a key is set, without making a real API call."""
-        monkeypatch.setattr(ai_planner, "GROQ_API_KEY", "fake-key-for-test")
+    def test_groq_backend_selected_when_explicitly_enabled(self, monkeypatch):
+        """Verify Groq is used when settings explicitly enable it + key is set (mocked, no real API call)."""
+        from safeshell.settings import load_settings, save_settings
+        s = load_settings()
+        s["groq_enabled"] = True
+        s["groq_api_key"] = "fake-key-for-test"
+        save_settings(s)
 
         fake_plan = {
             "original_command": "rm old.txt && mv new.txt old.txt",
@@ -310,18 +334,34 @@ class TestAiPlanner:
         assert plan["_backend"] == "groq"
         assert len(plan["undo_steps"]) == 2
 
-    def test_ollama_consent_respected_when_declined(self, monkeypatch, tmp_path):
-        """If user declines local LLM consent, must fall back to heuristic — not crash, not force-use it."""
-        monkeypatch.setattr(ai_planner, "GROQ_API_KEY", "")
-        monkeypatch.setattr(ai_planner, "_ollama_available", lambda: True)
-        monkeypatch.setattr(ai_planner, "PREFS_PATH", str(tmp_path / "prefs.json"))
-        monkeypatch.setattr("builtins.input", lambda _: "n")  # simulate user typing "n"
+    def test_local_llm_disabled_by_default_even_if_ollama_installed(self, monkeypatch):
+        """Even if Ollama IS installed on the machine, it must not be used unless
+        the user explicitly enabled it via 'safeshell settings'."""
+        monkeypatch.setattr(ai_planner, "_ollama_available", lambda: True)  # simulate Ollama present
 
         parsed = parse_command("rm old.txt && mv new.txt old.txt")
         impact = ImpactReport(files_deleted=1, files_modified=1)
         plan = ai_planner.generate_undo_plan(parsed, impact, "MEDIUM")
 
-        assert plan["_backend"] == "heuristic (no AI backend available/consented)"
+        # local_llm_enabled defaults to False -> must stay heuristic despite Ollama being available
+        assert plan["_backend"] == "heuristic (no AI backend enabled)"
+
+    def test_local_llm_used_when_explicitly_enabled(self, monkeypatch):
+        """When the user turns local LLM ON via settings, and Ollama is available, it should be used."""
+        from safeshell.settings import load_settings, save_settings
+        s = load_settings()
+        s["local_llm_enabled"] = True
+        save_settings(s)
+
+        monkeypatch.setattr(ai_planner, "_ollama_available", lambda: True)
+        fake_plan = {"undo_steps": [{"action": "restore", "target": "/tmp/old.txt", "method": "restore_from_snapshot"}]}
+        monkeypatch.setattr(ai_planner, "_ollama_plan", lambda *a, **kw: {**fake_plan, "_backend": "ollama (gemma3:4b)"})
+
+        parsed = parse_command("rm old.txt && mv new.txt old.txt")
+        impact = ImpactReport(files_deleted=1, files_modified=1)
+        plan = ai_planner.generate_undo_plan(parsed, impact, "MEDIUM")
+
+        assert plan["_backend"] == "ollama (gemma3:4b)"
 
 
 # ═══════════════════════════════════════════════════════════════

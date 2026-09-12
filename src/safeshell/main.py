@@ -9,6 +9,7 @@ logic nahi bacha.
 """
 
 import os
+import getpass
 
 import typer
 from rich.console import Console
@@ -19,11 +20,12 @@ from .interceptor import parse_command
 from .risk_scorer import score_risk
 from .models import ImpactReport
 from .simulator import simulate, SimulationError
-from .ai_planner import generate_undo_plan
+from .ai_planner import generate_undo_plan, _ollama_available
 from .checkpoint import create_checkpoint
 from .executor import execute_command
 from .rollback import rollback as do_rollback
 from .shell_integration import get_shell_init_script
+from .settings import load_settings, save_settings, reset_settings, DEFAULT_SETTINGS
 
 
 def _get_simulation_root(targets: list) -> str | None:
@@ -106,11 +108,15 @@ def run(command: str = typer.Argument(..., help="The command to run, e.g. 'rm -r
 
     # ── AI/Rule-based Undo Plan (Module 3) ──
     # Simple commands -> instant rule-based plan. Compound commands (&&, ;, |) ->
-    # Groq (if key set) -> Ollama (if available + user consents) -> heuristic fallback.
+    # backend chosen ENTIRELY by persistent settings (safeshell settings) — no
+    # per-run prompts. Fresh install = heuristic only, by design.
     undo_plan = generate_undo_plan(parsed, impact, risk["level"])
     backend = undo_plan.pop("_backend", "heuristic")
     console.print(f"[dim]🧩 Undo plan generated via [bold]{backend}[/bold] "
                    f"({len(undo_plan.get('undo_steps', []))} step(s))[/dim]")
+    if backend.startswith("heuristic (no AI backend"):
+        console.print("[dim]   (Tip: run 'safeshell settings' to enable Groq/local-LLM "
+                       "reasoning for compound commands)[/dim]")
 
     # ── Checkpoint lo (existing paths ka) ──
     snapshot_id = create_checkpoint(parsed.targets)
@@ -215,6 +221,93 @@ def setup():
     console.print("[green]✅ Added SafeShell integration to ~/.bashrc[/green]")
     console.print("[dim]Restart your terminal (or run 'source ~/.bashrc'), then use "
                    "'safeshell-activate' to start intercepting rm/mv/chmod.[/dim]")
+
+
+def _mask_key(key: str) -> str:
+    """API key ko display ke liye mask karo (sirf last 4 chars dikhao)."""
+    if not key:
+        return "(not set)"
+    return f"{'*' * max(len(key) - 4, 0)}{key[-4:]}"
+
+
+def _print_settings_status(settings: dict):
+    table = Table(title="SafeShell AI Backend Settings")
+    table.add_column("Backend")
+    table.add_column("Status")
+    table.add_column("Detail")
+
+    groq_status = "[green]enabled[/green]" if settings["groq_enabled"] else "[dim]disabled[/dim]"
+    table.add_row("Groq (cloud)", groq_status, f"API key: {_mask_key(settings.get('groq_api_key'))}")
+
+    ollama_status = "[green]enabled[/green]" if settings["local_llm_enabled"] else "[dim]disabled[/dim]"
+    ollama_detect = "detected" if _ollama_available() else "not detected on this system"
+    table.add_row("Ollama (local)", ollama_status,
+                   f"Model: {settings.get('local_llm_model') or 'default'} ({ollama_detect})")
+
+    table.add_row("Heuristic (rule-based)", "[green]always on[/green]", "Cannot be disabled — the safety net")
+
+    console.print(table)
+
+
+@app.command()
+def settings():
+    """
+    Interactive settings menu — configure Groq API key, and enable/disable
+    Groq / local-LLM (Ollama) backends. Nothing here changes silently:
+    a fresh install always starts with everything OFF except heuristic.
+    """
+    current = load_settings()
+
+    while True:
+        console.print()
+        _print_settings_status(current)
+        console.print(
+            "\n[bold]1[/bold]. Set/Update Groq API key\n"
+            "[bold]2[/bold]. Enable/Disable Groq backend\n"
+            "[bold]3[/bold]. Enable/Disable local LLM (Ollama) backend\n"
+            "[bold]4[/bold]. Reset to defaults (heuristic only)\n"
+            "[bold]5[/bold]. Exit"
+        )
+        choice = input("\nChoose an option [1-5]: ").strip()
+
+        if choice == "1":
+            key = getpass.getpass("Enter your Groq API key (input hidden): ").strip()
+            if key:
+                current["groq_api_key"] = key
+                save_settings(current)
+                console.print("[green]✅ Groq API key saved.[/green]")
+            else:
+                console.print("[yellow]No key entered — nothing changed.[/yellow]")
+
+        elif choice == "2":
+            current["groq_enabled"] = not current["groq_enabled"]
+            if current["groq_enabled"] and not current.get("groq_api_key"):
+                console.print("[yellow]⚠️  Groq enabled, but no API key is set yet "
+                               "(use option 1). It will fall back to heuristic until you add one.[/yellow]")
+            save_settings(current)
+            console.print(f"[green]Groq backend is now {'ENABLED' if current['groq_enabled'] else 'DISABLED'}.[/green]")
+
+        elif choice == "3":
+            current["local_llm_enabled"] = not current["local_llm_enabled"]
+            if current["local_llm_enabled"] and not _ollama_available():
+                console.print("[yellow]⚠️  Local LLM enabled, but Ollama isn't detected on this "
+                               "system (or has no models pulled). It will fall back to heuristic "
+                               "until Ollama is set up.[/yellow]")
+            save_settings(current)
+            console.print(f"[green]Local LLM backend is now "
+                           f"{'ENABLED' if current['local_llm_enabled'] else 'DISABLED'}.[/green]")
+
+        elif choice == "4":
+            reset_settings()
+            current = dict(DEFAULT_SETTINGS)
+            console.print("[green]✅ Reset to defaults — heuristic-only mode.[/green]")
+
+        elif choice == "5":
+            console.print("[dim]Exiting settings.[/dim]")
+            break
+
+        else:
+            console.print("[red]Invalid option, choose 1-5.[/red]")
 
 
 if __name__ == "__main__":

@@ -12,6 +12,17 @@ license = { text = "MIT" }
 authors = [
     { name = "Aditya" }
 ]
+keywords = ["shell", "cli", "rm", "undo", "rollback", "overlayfs", "safety", "linux"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Shells",
+    "Topic :: System :: Systems Administration",
+]
 dependencies = [
     "typer>=0.12",
     "rich>=13.0",
@@ -21,6 +32,10 @@ dependencies = [
     "python-dotenv>=1.0",
     "sqlite-utils>=3.35",
 ]
+
+[project.urls]
+Homepage = "https://github.com/DevXDividends/SafeShell"
+Repository = "https://github.com/DevXDividends/SafeShell"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
