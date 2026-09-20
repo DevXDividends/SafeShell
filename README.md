@@ -1,16 +1,42 @@
-# SafeShell
+# 🛡️ SafeShell
 
 **A Transactional Command Execution Framework with AI-Generated Undo Plans and Simulation-Based Safety Guarantees**
 
-SafeShell is a shell wrapper that simulates destructive commands (`rm`, `mv`, `chmod`, etc.) before running them, executes with automatic checkpointing, and can roll back using an AI-generated undo plan — like database transactions, but for your terminal.
+Every terminal user has typed `rm -rf` on the wrong path at least once. SafeShell simulates destructive commands *before* they run, checkpoints your data automatically, and lets you roll back with a single command — like database transactions, but for your shell.
+
+```
+$ rm -rf ~/projects/demo/build
+
+⚠️  RISK ANALYSIS
+Command: rm -rf ~/projects/demo/build
+Risk Level: LOW (score: 4)
+  - 2 files deleted
+
+Proceed? [y/N]: y
+📸 Checkpoint created
+▶️  Executing...
+✅ Done. Transaction #12 logged.
+
+$ safeshell undo 12
+✅ Restored: ~/projects/demo/build
+```
 
 ---
 
-## Why This Project
+## ✨ What Makes SafeShell Different
 
-Every terminal user has typed `rm -rf` on the wrong path at least once. Existing solutions (trash-cli, aliases, cron backups) either intercept blindly without understanding *impact*, or back up everything regardless of risk. SafeShell's contribution is **simulate → assess risk → confirm → checkpoint → execute → (optionally) undo** — a full transactional lifecycle around ordinary shell commands, built on real OS primitives rather than a wrapper script that just says "are you sure? y/n".
+| | |
+|---|---|
+| 🔬 **Real dry-run, not a guess** | Mounts an OverlayFS layer over the target directory and *actually runs* the command in a kernel-level sandbox before touching real files |
+| 📸 **Automatic checkpoints** | Every risky command is backed up (incremental, hardlink-based) *before* it executes |
+| 🧠 **AI used selectively** | Simple commands get instant rule-based undo plans. Multi-step chained commands (`rm x && mv y z`) can optionally use an LLM to reason about the correct undo order |
+| 🔒 **Opt-in AI, by design** | Fresh install = zero API calls, zero local model usage, ever — until *you* explicitly enable it via `safeshell settings` |
+| 🫥 **Transparent or explicit** | Use `safeshell run "..."` directly, or `safeshell-activate` to transparently intercept `rm`/`mv`/`chmod` in your shell |
+| 📜 **Full audit trail** | Every command, its risk score, and its outcome is logged to a local SQLite database |
 
-## System Architecture
+---
+
+## 🏗️ Architecture
 
 ```
  User types a command
@@ -22,9 +48,9 @@ Every terminal user has typed `rm -rf` on the wrong path at least once. Existing
         ▼              ▼                   ▼
  2. SIMULATION    3. AI UNDO          4. RISK SCORER
     ENGINE           PLANNER             (rule-based)
- (OverlayFS        (Ollama LLM,
-  dry-run)          rule-based for
-        │           simple commands)
+ (OverlayFS      (Groq / Ollama /
+  dry-run)        heuristic — user-
+        │         controlled priority)     │
         │              │                   │
         └──────────────┴───────────────────┘
                         │
@@ -45,102 +71,86 @@ Every terminal user has typed `rm -rf` on the wrong path at least once. Existing
               safeshell undo <id> → 8. ROLLBACK ENGINE
 ```
 
-## Tech Stack
-
-| Layer | Technology | Why |
-|---|---|---|
-| Dev environment | WSL2 + Ubuntu | Real Linux kernel → real syscalls, OverlayFS |
-| Core language | Python 3.11 | Fast to build, huge syscall/file libraries |
-| Command interception | Python CLI (`typer`) | Simpler than full `ptrace` syscall interception for a semester project |
-| Simulation / sandbox | OverlayFS (Linux kernel) | Kernel-level copy-on-write — simulate writes without touching real files |
-| Snapshotting | `rsync --link-dest` | Hardlink-based incremental snapshots, no special filesystem needed |
-| AI undo-plan generation | Ollama (local LLM, e.g. `gemma3:4b`) | No internet dependency during demo/viva |
-| Metadata / audit | SQLite | Lightweight, zero-config, perfect for command history |
-| CLI / UI | `rich` + `typer` | Clean terminal tables, colors, confirmation prompts |
-
-## Module-by-Module Breakdown
+## 🧩 Module Breakdown
 
 | # | Module | File | What it does |
 |---|--------|------|---------------|
-| 1 | Command Interceptor | `interceptor.py` | Parses the raw command, classifies it as risky/safe, extracts targets |
-| 2 | Simulation Engine | `simulator.py` | Mounts an OverlayFS over the target directory, dry-runs the command, inspects the upper (copy-on-write) layer to compute a real impact report — **without touching real files** |
-| 3 | AI Undo Planner | `ai_planner.py` | Simple commands get a fast rule-based undo plan. Compound/chained commands (`&&`, `;`, `\|`) are sent to a local LLM (Ollama) to generate a correctly-ordered, multi-step undo plan |
-| 4 | Risk Scorer | `risk_scorer.py` | Deterministic, explainable scoring (files deleted, system paths touched, processes affected) → LOW / MEDIUM / HIGH / CRITICAL |
-| 5 | Checkpoint Engine | `checkpoint.py` | Takes an incremental, hardlink-based backup of every target path before real execution |
-| 6 | Real Execution | `executor.py` | Runs the actual command via `subprocess`, captures stdout/stderr/exit code |
-| 7 | Audit Log | `db.py` | SQLite-backed transaction history: command, risk level, snapshot id, undo plan, execution status |
-| 8 | Rollback Engine | `rollback.py` | Reads the undo plan for a transaction id and restores the affected paths from their checkpoint |
+| 1 | Command Interceptor | `interceptor.py` | Parses the raw command, classifies risk, extracts and expands target paths |
+| 2 | Simulation Engine | `simulator.py` | Mounts an OverlayFS layer over the target directory and dry-runs the command; inspects the copy-on-write layer for a real impact report |
+| 3 | AI Undo Planner | `ai_planner.py` | Simple commands → instant rule-based plan. Compound commands → Groq → Ollama → heuristic, entirely driven by persistent settings |
+| 4 | Risk Scorer | `risk_scorer.py` | Deterministic, explainable scoring: LOW / MEDIUM / HIGH / CRITICAL |
+| 5 | Checkpoint Engine | `checkpoint.py` | Incremental, hardlink-based backups (`rsync --link-dest`) before execution |
+| 6 | Real Execution | `executor.py` | Runs the actual command, captures stdout/stderr/exit code |
+| 7 | Audit Log | `db.py` | SQLite-backed transaction history |
+| 8 | Rollback Engine | `rollback.py` | Restores affected paths from their checkpoint, by transaction ID |
+| — | Settings | `settings.py` | Persistent, explicit opt-in config for AI backends (`~/.safeshell/settings.json`) |
+| — | Shell Integration | `shell_integration.py` | `safeshell-activate` / `safeshell-down` bash functions for transparent interception |
 
-`main.py` is the CLI entrypoint that wires all eight modules together (`run`, `history`, `undo` commands).
+## 🧠 Design Philosophy: AI as a Scoped Tool, Not a Crutch
 
-## Design Philosophy — AI Used Selectively, Not as a Blanket Dependency
+- **Risk scoring is 100% rule-based** — explainable and auditable, never dependent on model quality.
+- **Single-action commands** (`rm -rf folder`) always get a rule-based undo plan — an LLM call would only add latency for zero benefit here.
+- **The LLM is reserved for genuinely ambiguous, multi-step commands** — where correctly ordering a sequence of operations is a real reasoning problem.
+- **Nothing is enabled by default.** A fresh install makes zero external API calls and never touches a local model until you explicitly turn it on via `safeshell settings`.
+- **If an AI backend fails, the system falls back to heuristic automatically** — the safety-critical path never depends on AI being available or correct.
+- Because rollback restores each path **independently from its own snapshot** (not by replaying inverse commands), even an imperfect undo *plan* doesn't compromise the safety guarantee — the checkpoint is the real safety net.
 
-A common criticism of "AI-powered" tools is that the AI is decorative. SafeShell's architecture deliberately separates deterministic and probabilistic components:
+## ⚙️ Requirements
 
-- **Risk scoring is 100% rule-based** — explainable, auditable, and doesn't depend on model quality.
-- **Simple, single-action commands** (`rm -rf folder`) get a rule-based undo plan — "restore from snapshot" is always correct here, so calling an LLM would only add latency and non-determinism for no benefit.
-- **The LLM is reserved for genuinely ambiguous, multi-step commands** (e.g. `rm old.txt && mv new.txt old.txt`), where correctly *ordering* and *interpreting* a sequence of operations is a semantic reasoning problem that hand-written rules struggle to generalize.
-- If the LLM call fails or returns an incomplete plan, the system automatically falls back to the rule-based planner — the safety-critical path never depends on the AI being available or correct.
-
-## Getting Started
-
-### Prerequisites
-- WSL2 with Ubuntu (or any real Linux kernel — OverlayFS mounting needs `sudo`)
-- Python 3.11+
+- **Linux** (tested on WSL2/Ubuntu). OverlayFS simulation needs `sudo` and a **native Linux filesystem** — it will not work on `/mnt/c` or `/mnt/d` under WSL.
 - `rsync`, `zstd`
-- [Ollama](https://ollama.com) with a local model pulled (e.g. `ollama pull gemma3:4b`)
+- Python 3.9+
+- Optional: a [Groq](https://console.groq.com) API key (free tier available) for cloud AI, or [Ollama](https://ollama.com) for local AI
 
-### Setup
+## 📦 Installation
+
+The recommended way — installs `safeshell` as a global command, no virtualenv juggling required:
+
 ```bash
-git clone <your-repo-url>
-cd safeshell
+sudo apt install -y pipx rsync zstd
+pipx ensurepath
+# open a new terminal (or `exec bash`) so the PATH change takes effect
 
-python3 -m venv venv
-source venv/bin/activate
-
-pip install -r requirements.txt
+pipx install https://github.com/DevXDividends/SafeShell/releases/latest/download/safeshell_cli-0.2.0-py3-none-any.whl
 ```
 
-### Usage
+One-time shell setup, so `safeshell-activate` works in every terminal:
+
 ```bash
-# Run a command through SafeShell
-python3 main.py run "rm -rf /tmp/some_folder"
-
-# View transaction history
-python3 main.py history
-
-# Undo a transaction by its ID
-python3 main.py undo 12
+safeshell setup
+source ~/.bashrc
 ```
 
-## Demo Scenarios
+See **[USAGE.md](USAGE.md)** for the full walkthrough, demo scenarios, and troubleshooting.
 
-1. **Basic delete + undo**
-   ```bash
-   mkdir -p /tmp/demo && echo "data" > /tmp/demo/file.txt
-   python3 main.py run "rm -rf /tmp/demo"
-   python3 main.py undo <id>
-   ```
-   Impact report shows the simulated deletion; after undo, the folder and its contents are restored exactly.
+## 🚀 Quick Start
 
-2. **History audit**
-   ```bash
-   python3 main.py history
-   ```
-   Shows every transaction ever run, with risk level and rollback status.
+```bash
+safeshell-activate                  # rm/mv/chmod are now intercepted in this shell
+rm -rf some_folder                  # simulated → risk-scored → checkpointed → executed
+safeshell history                   # view every transaction ever run
+safeshell undo <id>                 # roll back any transaction
+safeshell-down                      # deactivate, back to plain rm/mv/chmod
+```
 
-3. **Compound command (AI undo plan)**
-   ```bash
-   python3 main.py run "rm old.txt && mv new.txt old.txt"
-   ```
-   The AI planner generates a 2-step undo plan in reverse execution order (undo the `mv` first, then restore the `rm`).
+## 🧪 Testing
 
-## Known Limitations / Future Work
+```bash
+pytest tests/test_safeshell.py -v
+```
 
-- `interceptor.py` currently detects the *first* command in a compound chain reliably; target extraction for later sub-commands in a chain is not yet fully robust. This does not affect simple, single-action commands (the common case).
-- Simulation currently operates at directory granularity (an OverlayFS mount targets a directory, not an individual file).
-- **Stretch goals** (see original design doc): `ptrace`-based syscall interception for lower-level OS interception, a FastAPI + HTML dashboard for visual transaction history, Btrfs snapshots as an alternative to `rsync` for instant (non-incremental) rollback.
+25 tests covering all 8 modules, including the settings-driven AI backend priority chain (mocked — no real API calls or local model required to run the suite).
 
-## OS Concepts Demonstrated
+## ⚠️ Known Limitations / Future Work
 
-Filesystem layering (OverlayFS, copy-on-write), process execution (`subprocess`/fork-exec semantics), snapshotting via hardlinks, and risk-based access control thinking — with the AI layer scoped narrowly as a differentiator, not a crutch.
+- `interceptor.py` reliably detects the *first* command in a compound chain; target extraction for later sub-commands isn't fully robust (doesn't affect simple, single-action commands — the common case).
+- Simulation operates at directory granularity (an OverlayFS mount targets a directory, not an individual file).
+- **Stretch goals:** `ptrace`-based syscall interception for lower-level OS interception, a web dashboard for transaction history, Btrfs snapshots as an alternative to `rsync` for instant rollback.
+
+## 🎓 OS Concepts Demonstrated
+
+Filesystem layering and copy-on-write (OverlayFS), process execution (`subprocess`/fork-exec semantics), snapshotting via hardlinks, and risk-based access control — with the AI layer scoped narrowly as a differentiator, not a dependency.
+
+## 📄 License
+
+MIT — see [LICENSE](LICENSE).

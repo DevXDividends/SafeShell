@@ -1,176 +1,221 @@
 # SafeShell — Usage Guide
 
-## 1. One-Time Setup (already done, for reference)
+A friendly, step-by-step walkthrough. If you just installed SafeShell, start at Section 1.
+
+---
+
+## 1. First-Time Setup (do this once)
 
 ```bash
-pip install -e .          # installs the 'safeshell' command globally in your venv
-safeshell setup            # adds shell integration to ~/.bashrc
-source ~/.bashrc           # reload so it takes effect in this terminal
+# System dependencies
+sudo apt install -y pipx rsync zstd
+pipx ensurepath
+exec bash                     # reload your shell so pipx's PATH change applies
+
+# Install SafeShell globally (no venv needed, works in every terminal)
+pipx install https://github.com/DevXDividends/SafeShell/releases/latest/download/safeshell_cli-0.2.0-py3-none-any.whl
+
+# Wire up shell integration (so safeshell-activate works everywhere)
+safeshell setup
+source ~/.bashrc
 ```
 
-After this, every **new terminal** will automatically have `safeshell-activate` and `safeshell-down` available — no need to run `eval "$(safeshell shellinit)"` manually again.
+Verify it worked:
+```bash
+safeshell --help
+```
+You should see 6 commands: `run`, `history`, `undo`, `shellinit`, `setup`, `settings`.
+
+> ⚠️ **Important:** SafeShell's simulation engine needs a native Linux filesystem. If you're on WSL, test on paths under `/tmp` or your home directory (`~/...`) — **not** `/mnt/c/...` or `/mnt/d/...` (Windows-mounted drives don't support the kernel feature it relies on).
 
 ---
 
 ## 2. Two Ways to Use SafeShell
 
-### Mode A — Direct command (no activation needed)
-Explicitly wrap any command:
+### Mode A — Explicit (`safeshell run`)
+Works anywhere, anytime, no setup:
 ```bash
 safeshell run "rm -rf /tmp/some_folder"
 ```
-Works anywhere, anytime, doesn't touch your `rm`/`mv`/`chmod`.
 
-### Mode B — Transparent interception (the "real" experience)
+### Mode B — Transparent (recommended for daily use)
 ```bash
 safeshell-activate
 ```
-Prompt changes to `(safeshell) $`. Now typing `rm`, `mv`, or `chmod` **directly** routes through SafeShell automatically:
+Your prompt changes to `(safeshell) $`. Now `rm`, `mv`, and `chmod` are **automatically** routed through SafeShell:
 ```bash
-rm -rf /tmp/some_folder      # automatically intercepted, no need to type "safeshell run"
+rm -rf /tmp/some_folder      # just type it normally
 ```
-When done:
+When you're done:
 ```bash
 safeshell-down
 ```
-Prompt and `rm`/`mv`/`chmod` return to normal.
 
 ---
 
-## 3. Core Commands
+## 3. Try It: A Complete Walkthrough
+
+```bash
+# Set up a little test project
+mkdir -p ~/demo/build
+echo "compiled output" > ~/demo/build/bundle.js
+
+safeshell-activate
+
+# Delete the build folder — this is where SafeShell kicks in
+rm -rf ~/demo/build
+```
+
+You'll see something like:
+```
+🔍 Simulating on /home/you/demo/build (dry-run, real files untouched)...
+
+⚠️  RISK ANALYSIS
+Command: rm -rf /home/you/demo/build
+Risk Level: LOW (score: 2)
+  - 1 files deleted
+
+Proceed? [y/N]:
+```
+
+Type `y`. Then check your history and undo it:
+```bash
+safeshell history
+safeshell undo 1        # use whatever ID showed up in history
+ls ~/demo/build          # it's back!
+
+safeshell-down
+```
+
+---
+
+## 4. Core Commands Reference
 
 | Command | What it does |
 |---|---|
-| `safeshell run "<command>"` | Runs a command through the full pipeline (simulate → risk → confirm → checkpoint → execute → log) |
-| `safeshell history` | Shows a table of every transaction ever run |
-| `safeshell undo <id>` | Rolls back a specific transaction by its ID |
-| `safeshell-activate` | Starts transparent interception in the current shell |
-| `safeshell-down` | Stops interception, restores normal `rm`/`mv`/`chmod` |
+| `safeshell run "<command>"` | Runs a command through the full pipeline |
+| `safeshell history` | Shows every transaction ever run |
+| `safeshell undo <id>` | Rolls back a specific transaction |
+| `safeshell settings` | Interactive menu to configure AI backends |
 | `safeshell setup` | One-time: wires shell integration into `~/.bashrc` |
-| `safeshell shellinit` | Prints the raw bash functions (used internally by `setup`) |
+| `safeshell-activate` | Starts transparent interception in this shell |
+| `safeshell-down` | Stops interception, restores normal `rm`/`mv`/`chmod` |
 
 ---
 
-## 4. Try These Demo Scenarios
+## 5. Understanding the AI Backend (Optional, Off by Default)
 
-### Scenario 1 — Basic delete + undo
+**On a fresh install, nothing AI-related ever runs — by design.** Simple commands (single `rm`, single `mv`) always use an instant, rule-based undo plan. No network calls, no local model use.
+
+AI only becomes relevant for **compound commands** — ones chained with `&&`, `;`, or `|`, like:
 ```bash
-mkdir -p /tmp/demo1 && echo "important data" > /tmp/demo1/file.txt
-safeshell run "rm -rf /tmp/demo1"
-# → shows risk analysis (LOW, 1 file), confirm with 'y'
-safeshell history
-safeshell undo <id-shown-above>
-ls /tmp/demo1   # file.txt is back
+rm old.txt && mv new.txt old.txt
+```
+Here, figuring out the *correct order* to undo two chained operations is a real reasoning problem, so an LLM can help generate a clearer, better-explained undo plan. If you never chain commands like this, you'll never see AI mentioned at all — heuristic handles everything.
+
+### Turning it on
+
+```bash
+safeshell settings
 ```
 
-### Scenario 2 — Permission mistake on a system path (should be flagged risky)
-```bash
-mkdir -p /tmp/demo2/etc_sim   # safe stand-in, don't test on real /etc unless you're confident
-safeshell run "chmod -R 777 /etc/some_fake_sensitive_path"
-# → simulation may fail gracefully since path doesn't exist; try with a real owned test dir instead:
-safeshell run "chmod -R 777 /tmp/demo2"
+You'll see a menu:
+```
+                       SafeShell AI Backend Settings
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Backend                ┃ Status    ┃ Detail                              ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ Groq (cloud)           │ disabled  │ API key: (not set)                  │
+│ Ollama (local)         │ disabled  │ Model: default (detected)           │
+│ Heuristic (rule-based) │ always on │ Cannot be disabled — the safety net │
+└────────────────────────┴───────────┴─────────────────────────────────────┘
+
+1. Set/Update Groq API key
+2. Enable/Disable Groq backend
+3. Enable/Disable local LLM (Ollama) backend
+4. Reset to defaults (heuristic only)
+5. Exit
 ```
 
-### Scenario 3 — Compound command (triggers AI undo planner)
-```bash
-mkdir -p /tmp/demo3
-echo "OLD DATA" > /tmp/demo3/old.txt
-echo "NEW DATA" > /tmp/demo3/new.txt
+- **To use Groq (cloud, fast, free tier available):** choose `1` to paste your API key (get one free at [console.groq.com](https://console.groq.com)), then `2` to enable it.
+- **To use Ollama (local, private, needs more RAM):** install [Ollama](https://ollama.com) and pull a model (`ollama pull gemma3:4b`) first, then choose `3` to enable it in SafeShell.
+- **Heuristic can never be disabled** — it's always there as the fallback, no matter what.
 
-export GROQ_API_KEY="your_key"   # or put it in a .env file in the project root
-safeshell run "rm /tmp/demo3/old.txt && mv /tmp/demo3/new.txt /tmp/demo3/old.txt"
-# → look for: "🧩 Undo plan generated via groq (2 step(s))"
-safeshell history
-safeshell undo <id>
-cat /tmp/demo3/old.txt   # should show "OLD DATA" again
+Your choice is saved in `~/.safeshell/settings.json` and persists across sessions. If both Groq and Ollama are enabled, Groq takes priority. If either backend fails at runtime for any reason, SafeShell automatically falls back to heuristic — it never just crashes or blocks you.
+
+### Try it
+```bash
+mkdir -p ~/ai_demo
+echo "OLD" > ~/ai_demo/old.txt
+echo "NEW" > ~/ai_demo/new.txt
+
+rm ~/ai_demo/old.txt && mv ~/ai_demo/new.txt ~/ai_demo/old.txt
+```
+Look for `🧩 Undo plan generated via groq (2 step(s))` in the output once enabled — versus `via heuristic` before you turned it on.
+
+---
+
+## 6. More Demo Scenarios
+
+**Permission change on your own files:**
+```bash
+mkdir -p ~/demo2 && touch ~/demo2/file.txt
+safeshell run "chmod -R 777 ~/demo2"
 ```
 
-### Scenario 4 — Transparent interception end-to-end
+**A safe, non-destructive command (passes through untouched):**
 ```bash
 safeshell-activate
-mkdir -p /tmp/demo4 && echo "data" > /tmp/demo4/f.txt
-rm -rf /tmp/demo4          # just type rm normally — SafeShell catches it
-safeshell history
+ls -la ~
 safeshell-down
 ```
 
-### Scenario 5 — Safe command passes through untouched
-```bash
-safeshell-activate
-ls -la /tmp
-rm --help                   # not destructive in effect, but still routed — check it doesn't break
-safeshell-down
-```
-
 ---
 
-## 5. AI Backend Behavior (What You'll See)
-
-- **Simple commands** (`rm -rf folder`) → always instant, rule-based. No AI call, no delay.
-- **Compound commands** (`&&`, `;`, `|`) → tries in order:
-  1. **Groq** (if `GROQ_API_KEY` is set) — fast, cloud-based, shows `_backend: groq`
-  2. **Ollama** (if installed locally) — asks for your permission the *first* time only:
-     ```
-     [SafeShell] A local AI model (Ollama) was detected on this system.
-     Allow SafeShell to use the local LLM for this? [y/N]:
-     ```
-     Your answer is cached in `~/.safeshell/prefs.json`.
-  3. **Heuristic fallback** — if neither is available, or you decline consent.
-
-To reset the Ollama consent prompt:
-```bash
-rm ~/.safeshell/prefs.json
-```
-
-To switch models:
-```bash
-export SAFESHELL_GROQ_MODEL="openai/gpt-oss-120b"     # bigger Groq model
-export SAFESHELL_OLLAMA_MODEL="qwen2.5:14b"            # bigger local model
-```
-
----
-
-## 6. Running Tests
+## 7. Running the Test Suite
 
 ```bash
+git clone https://github.com/DevXDividends/SafeShell
+cd SafeShell
+pip install -e ".[dev]"
 pytest tests/test_safeshell.py -v
 ```
 
-To also run the sudo-dependent OverlayFS test (will prompt for your password):
+To also run the sudo-dependent OverlayFS test:
 ```bash
 SAFESHELL_TEST_ALLOW_SUDO=1 pytest tests/test_safeshell.py -v
 ```
 
 ---
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 | Symptom | Fix |
 |---|---|
-| `sudo: authenticate` password prompt during `safeshell run` | Normal — simulation needs `sudo` for the OverlayFS mount. Just type your password. |
-| `FileNotFoundError: rsync` | `sudo apt install rsync` |
-| `ModuleNotFoundError: No module named 'X'` | `pip install -r requirements.txt` (or `pip install -e .` again) |
-| Groq call fails with `model_not_found` | Groq deprecates models periodically — check `console.groq.com/docs/models` and update `SAFESHELL_GROQ_MODEL` |
-| Groq call fails with `Invalid API Key` (401) | Check `.env` has no stray quotes/spaces; make sure no stale `export GROQ_API_KEY=...` is set in the same shell session (it overrides `.env` otherwise — we fixed this with `override=True`, but double check) |
-| `safeshell-activate` says nothing happened / `rm` isn't intercepted | Did you run `source ~/.bashrc` (or open a new terminal) after `safeshell setup`? |
-| Undo says "Snapshot data missing" | The path in the undo plan doesn't match what was checkpointed — usually only happens with unusual compound commands (known limitation, see README) |
+| `safeshell-activate: command not found` | Run `safeshell setup && source ~/.bashrc`, or open a brand-new terminal. If you just ran `pipx ensurepath` or `safeshell setup`, existing terminals won't pick it up automatically. |
+| `safeshell: command not found` (even after pipx install) | Run `pipx ensurepath` and open a new terminal — pipx's install directory needs to be on your `PATH`. |
+| `sudo: authenticate` password prompt | Normal — OverlayFS simulation needs `sudo` to mount. Just enter your password. |
+| Simulation silently skipped / risk shows 0 files for a folder you know has files | You're likely on a Windows-mounted path (`/mnt/c`, `/mnt/d` in WSL) — OverlayFS doesn't work there. Test on `/tmp` or `~/...` instead. |
+| `ModuleNotFoundError` / missing command | `sudo apt install rsync zstd`, and make sure you installed via `pipx`, not a stale `pip install -e .` in an unrelated venv. |
+| Groq call fails with `model_not_found` | Groq periodically deprecates models — check [console.groq.com/docs/models](https://console.groq.com/docs/models) and set `export SAFESHELL_GROQ_MODEL="<new-model-id>"`. |
+| Groq call fails with `Invalid API Key` (401) | Re-check the key via `safeshell settings` (option 1) — paste it fresh, no surrounding quotes or spaces. |
+| `safeshell-activate` works once but not in a *new* terminal | Check `~/.bashrc` — the SafeShell integration block must come **after** any `pipx`/PATH-related lines, otherwise `safeshell` isn't on the PATH yet when it tries to run. Run `tail -15 ~/.bashrc` to check the order. |
+| Undo says "Snapshot data missing" | The exact path in the undo plan doesn't match what was checkpointed — this can happen with unusual compound commands (see Known Limitations in the README). |
 
 ---
 
-## 8. Quick Reference — Full Session Example
+## 9. Quick Reference — A Full Session
 
 ```bash
-cd /mnt/d/aditya/safeshell
-source venv/bin/activate
 safeshell-activate
 
-mkdir -p /tmp/quicktest && echo "test" > /tmp/quicktest/f.txt
-rm -rf /tmp/quicktest
+mkdir -p ~/quicktest && echo "test" > ~/quicktest/f.txt
+rm -rf ~/quicktest
 # y
 
 safeshell history
 safeshell undo <id>
-ls /tmp/quicktest    # f.txt is back
+ls ~/quicktest    # f.txt is back
 
 safeshell-down
 ```
