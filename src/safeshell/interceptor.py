@@ -5,11 +5,17 @@ aur pata lagao ki ye "risky" hai ya nahi, aur konsi category me aata hai.
 """
 
 import os
+import re
 import shlex
 from dataclasses import dataclass, field
 from typing import List
 
 from .config import RISKY_COMMANDS, MULTI_WORD_RISKY, SYSTEM_PATHS
+
+# Shell control operators that separate sub-commands in a compound command.
+# Same pattern ai_planner.py uses to detect compound commands — kept in sync
+# so both modules agree on where one sub-command ends and the next begins.
+_COMPOUND_SPLIT_RE = re.compile(r"&&|;|\|(?!\|)")
 
 
 @dataclass
@@ -46,7 +52,33 @@ def parse_command(raw_command: str) -> ParsedCommand:
     # os.path.expanduser() zaroori hai: '~' sirf bash khud expand karta hai
     # jab unquoted ho — Python ke andar humein isse MANUALLY expand karna
     # padta hai, warna simulation/checkpoint silently skip ho jaate hain.
-    targets = [os.path.expanduser(t) for t in tokens[1:] if not t.startswith("-")]
+    #
+    # IMPORTANT: raw_command can be a COMPOUND command (rm x && mv y z).
+    # A plain shlex.split() over the whole string turns operators like
+    # '&&' and the next sub-command's verb (e.g. 'mv') into bogus targets,
+    # which then get treated as real files by the simulator/checkpoint
+    # engine. So we split the raw command into its sub-commands first
+    # (same operator set ai_planner.py uses), then pull targets out of
+    # EACH sub-command separately and merge them — this way checkpointing
+    # actually covers every file touched across the whole chain, and no
+    # operator/verb token leaks into the target list.
+    sub_commands = [sc for sc in _COMPOUND_SPLIT_RE.split(raw_command) if sc.strip()]
+
+    targets: List[str] = []
+    seen = set()
+    for sub in sub_commands:
+        try:
+            sub_tokens = shlex.split(sub)
+        except ValueError:
+            # Unbalanced quotes etc. in a sub-command — skip it rather than crash.
+            continue
+        for t in sub_tokens[1:]:
+            if t.startswith("-"):
+                continue
+            expanded = os.path.expanduser(t)
+            if expanded not in seen:
+                seen.add(expanded)
+                targets.append(expanded)
 
     touches_system = any(
         any(target == p or target.startswith(p + "/") for p in SYSTEM_PATHS)
