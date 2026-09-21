@@ -143,7 +143,6 @@ pytest tests/test_safeshell.py -v
 
 ## ⚠️ Known Limitations / Future Work
 
-- `interceptor.py` reliably detects the *first* command in a compound chain; target extraction for later sub-commands isn't fully robust (doesn't affect simple, single-action commands — the common case).
 - Simulation operates at directory granularity (an OverlayFS mount targets a directory, not an individual file).
 - **Stretch goals:** `ptrace`-based syscall interception for lower-level OS interception, a web dashboard for transaction history, Btrfs snapshots as an alternative to `rsync` for instant rollback.
 

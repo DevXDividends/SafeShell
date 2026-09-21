@@ -64,6 +64,13 @@ def parse_command(raw_command: str) -> ParsedCommand:
     # operator/verb token leaks into the target list.
     sub_commands = [sc for sc in _COMPOUND_SPLIT_RE.split(raw_command) if sc.strip()]
 
+    # chmod/chown ka pehla non-flag argument ek path nahi hota — ye mode
+    # (e.g. "777", "u+x") ya owner:group (e.g. "user:group") hota hai.
+    # Isse target maan lena galat checkpoint/rollback targets create karta
+    # hai (e.g. rollback "777" naam ka nonexistent path restore karne ki
+    # koshish karta hai).
+    _MODE_ARG_COMMANDS = {"chmod", "chown"}
+
     targets: List[str] = []
     seen = set()
     for sub in sub_commands:
@@ -72,8 +79,12 @@ def parse_command(raw_command: str) -> ParsedCommand:
         except ValueError:
             # Unbalanced quotes etc. in a sub-command — skip it rather than crash.
             continue
+        skip_next_non_flag = sub_tokens[0] in _MODE_ARG_COMMANDS if sub_tokens else False
         for t in sub_tokens[1:]:
             if t.startswith("-"):
+                continue
+            if skip_next_non_flag:
+                skip_next_non_flag = False
                 continue
             expanded = os.path.expanduser(t)
             if expanded not in seen:

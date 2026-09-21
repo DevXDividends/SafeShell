@@ -62,18 +62,27 @@ class TestInterceptor:
         result = parse_command("mv old.txt new.txt")
         assert result.touches_system_path is False
 
-    @pytest.mark.xfail(
-        reason="KNOWN LIMITATION: interceptor doesn't split compound commands "
-               "(&&/;/|) — target extraction picks up literal tokens like '&&' "
-               "and 'mv' as targets. Documented in README. Does not affect "
-               "simple/single-action commands.",
-        strict=False,
-    )
     def test_compound_command_targets_are_clean(self):
         result = parse_command("rm old.txt && mv new.txt old.txt")
-        # Ideally targets should ONLY be file paths, no shell operators/keywords
+        # Targets should ONLY be file paths, no shell operators/keywords
         assert "&&" not in result.targets
         assert "mv" not in result.targets
+
+    def test_tilde_is_expanded_in_targets(self):
+        result = parse_command("rm -rf ~/some/folder")
+        assert not any(t.startswith("~") for t in result.targets)
+
+    def test_chmod_mode_argument_is_not_a_target(self):
+        result = parse_command("chmod -R 777 /tmp/some/folder")
+        assert result.targets == ["/tmp/some/folder"]
+
+    def test_chown_owner_argument_is_not_a_target(self):
+        result = parse_command("chown -R user:group /tmp/some/folder")
+        assert result.targets == ["/tmp/some/folder"]
+
+    def test_compound_command_touching_system_path_is_flagged(self):
+        result = parse_command("mv file /etc/x && rm file2")
+        assert result.touches_system_path is True
 
 
 # ═══════════════════════════════════════════════════════════════

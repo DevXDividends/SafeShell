@@ -59,8 +59,24 @@ def simulate(command: str, target_dir: str) -> ImpactReport:
         target_dir,
     ]
 
+    # CRITICAL: agar safeshell process ka apna cwd hi target_dir ke andar hai
+    # (sabse common case — user "cd myproject && safeshell run ..." karta hai),
+    # to umount "target is busy" bolega aur lazy (-l) fallback lega. Lazy
+    # unmount turant complete nahi hota jab tak process khud us mount ko
+    # reference karna band na kare — matlab jab tak hum yahin cwd me baithe
+    # rahenge, baaki ka pura pipeline (checkpoint, real execution) STALE
+    # overlay view pe chalega, real filesystem pe nahi. Isse checkpoint
+    # silently galat/incomplete backup leta hai aur real execution phantom
+    # (simulated) data pe operate karta hai — safety guarantee hi toot jaati
+    # hai. Fix: mount/unmount ke around apna cwd target_dir se BAAHAR rakho.
+    original_cwd = os.getcwd()
+    cwd_inside_target = os.path.commonpath([original_cwd, target_dir]) == target_dir
+
     mounted = False
     try:
+        if cwd_inside_target:
+            os.chdir(os.path.dirname(target_dir) or "/")
+
         try:
             result = _run(mount_cmd)
         except FileNotFoundError as e:
@@ -71,13 +87,20 @@ def simulate(command: str, target_dir: str) -> ImpactReport:
         mounted = True
 
         # Command ko target_dir ke UPAR (overlay ke andar) chalao —
-        # isse asli path structure bhi same rehta hai, sirf writes upper me jaate hain
-        _run(command, shell=True)
+        # isse asli path structure bhi same rehta hai, sirf writes upper me jaate hain.
+        # cwd explicitly target_dir set karo taaki command ke relative paths
+        # sahi resolve ho.
+        _run(command, shell=True, cwd=target_dir)
 
         impact = _analyze_upper(upper, target_dir)
         return impact
 
     finally:
+        # Unmount se PEHLE apna cwd target_dir se hata do, warna hum khud
+        # hi "busy" ka reason ban jaate hain aur lazy fallback trigger hota hai.
+        if os.getcwd() == target_dir or os.path.commonpath([os.getcwd(), target_dir]) == target_dir:
+            os.chdir(os.path.dirname(target_dir) or "/")
+
         # Chahe kuch bhi ho jaaye, unmount ZAROOR karo — warna real folder
         # "stuck" reh jayega overlay ke peeche
         if mounted:
@@ -85,6 +108,13 @@ def simulate(command: str, target_dir: str) -> ImpactReport:
             if unmount_result.returncode != 0:
                 # Lazy unmount fallback — agar koi process abhi bhi folder use kar raha ho
                 _run(["sudo", "umount", "-l", target_dir])
+
+        # Original cwd wapas restore karo (ab safe hai — unmount ho chuka hai,
+        # isliye ye real, post-unmount filesystem ke through resolve hoga).
+        try:
+            os.chdir(original_cwd)
+        except OSError:
+            pass
 
         # OverlayFS ka 'workdir' andar se root-owned files bana deta hai
         # (kernel internal bookkeeping) — normal rmtree unhe delete nahi kar
