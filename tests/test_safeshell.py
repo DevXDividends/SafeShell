@@ -4,7 +4,7 @@ tests/test_safeshell.py — SINGLE-FILE TEST SUITE for SafeShell
 Sabhi 8 modules yahan test hote hain: interceptor, risk_scorer, checkpoint,
 executor, db, rollback, simulator, ai_planner.
 
-How to run:
+Run karne ka tareeka:
     cd safeshell/
     pytest tests/test_safeshell.py -v
 

@@ -10,6 +10,7 @@ logic nahi bacha.
 
 import os
 import getpass
+from typing import Optional
 
 import typer
 from rich.console import Console
@@ -28,7 +29,7 @@ from .shell_integration import get_shell_init_script
 from .settings import load_settings, save_settings, reset_settings, DEFAULT_SETTINGS
 
 
-def _get_simulation_root(targets: list) -> str | None:
+def _get_simulation_root(targets: list) -> Optional[str]:
     """
     Simulation ek DIRECTORY pe overlay mount karke hoti hai (single file pe nahi).
     Isliye agar target ek file hai, uska parent folder use karo.
