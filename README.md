@@ -104,7 +104,14 @@ $ safeshell undo 12
 
 ## 📦 Installation
 
-The recommended way — installs `safeshell` as a global command, no virtualenv juggling required:
+From PyPI:
+
+```bash
+sudo apt install -y pipx rsync zstd
+pipx install safeshell-cli
+```
+
+Or install straight from a GitHub release wheel (installs `safeshell` as a global command, no virtualenv juggling required):
 
 ```bash
 sudo apt install -y pipx rsync zstd

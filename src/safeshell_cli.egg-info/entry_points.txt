@@ -1,2 +1,0 @@
-[console_scripts]
-safeshell = safeshell.main:app
